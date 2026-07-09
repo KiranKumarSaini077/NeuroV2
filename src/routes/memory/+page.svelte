@@ -7,7 +7,6 @@
 
   let view = $state<'config' | 'memorize' | 'recall' | 'result'>('config');
 
-  // Config
   let sets = $state(3);
   let perSet = $state(2);
   let memTime = $state(30);
@@ -15,8 +14,7 @@
   let diff = $state('easy');
   const DIFF_MAX: Record<string, number> = { easy: 9, medium: 50, hard: 99 };
 
-  // Session
-  let memSets: MemSet[] = [];
+  let memSets: MemSet[] = $state([]);
   let peeked = $state(false);
   let sessionStart = $state(0);
   let timeLeft = $state(30);
@@ -26,7 +24,7 @@
   let score = $state(0);
   let elapsed = $state(0);
   let submitted = $state(false);
-  let userAnswers: (number | null)[] = [];
+  let userAnswers: (number | null)[] = $state([]);
 
   function genMemSets(): MemSet[] {
     const max = DIFF_MAX[diff];
@@ -50,8 +48,7 @@
   function stepper(key: 'sets' | 'perSet' | 'memTime', delta: number) {
     const cfg = { sets: { min: 1, max: 10 }, perSet: { min: 2, max: 5 }, memTime: { min: 1, max: 300 } };
     const c = cfg[key];
-    const val = key === 'sets' ? sets : key === 'perSet' ? perSet : memTime;
-    const nv = Math.max(c.min, Math.min(c.max, val + delta));
+    const nv = Math.max(c.min, Math.min(c.max, (key === 'sets' ? sets : key === 'perSet' ? perSet : memTime) + delta));
     if (key === 'sets') sets = nv;
     else if (key === 'perSet') perSet = nv;
     else memTime = nv;
@@ -66,33 +63,50 @@
     }
   }
 
-  function setDiff(d: string) { diff = d; }
-
   function startSession() {
     memSets = genMemSets();
     peeked = false;
+    submitted = false;
     sessionStart = Date.now();
-    timeLeft = memTime;
     correct = 0;
     total = memSets.length;
     score = 0;
     elapsed = 0;
-    submitted = false;
+    userAnswers = [];
     view = 'memorize';
     startMemTimer();
   }
 
   function startMemTimer() {
+    const total = memTime;
+    const circ = 176;
     clearInterval(timerInt!);
-    timeLeft = memTime;
-    const tick = () => {
-      timeLeft--;
+    timeLeft = total;
+
+    function tick() {
+      const pct = timeLeft / total;
+      const ring = document.getElementById('tr-fill');
+      const num = document.getElementById('tr-num');
+      const desc = document.getElementById('tr-desc');
+      const prog = document.getElementById('mem-prog');
+      if (ring) ring.style.strokeDashoffset = String(circ * (1 - pct));
+      if (prog) prog.style.width = (pct * 100) + '%';
+      if (num) {
+        const mins = Math.floor(timeLeft / 60);
+        const secs = timeLeft % 60;
+        num.textContent = mins > 0 ? `${mins}:${String(secs).padStart(2, '0')}` : String(secs);
+      }
+      if (ring) {
+        ring.style.stroke = pct > 0.5 ? 'var(--accent)' : pct > 0.25 ? 'var(--accent3)' : 'var(--accent2)';
+      }
       if (timeLeft <= 0) {
         clearInterval(timerInt!);
-        goRecall();
+        if (desc) desc.textContent = "Time's up! Now answer\u2026";
+        setTimeout(goRecall, 600);
         return;
       }
-    };
+      timeLeft--;
+    }
     tick();
     timerInt = setInterval(tick, 1000);
   }
@@ -101,7 +115,6 @@
     clearInterval(timerInt!);
     elapsed = Math.round((Date.now() - sessionStart) / 1000);
     view = 'recall';
-    // Focus first input after render
     setTimeout(() => {
       const el = document.getElementById('ai0') as HTMLInputElement;
       if (el) el.focus();
@@ -113,28 +126,37 @@
     view = 'config';
   }
 
+  function onRecallKey(e: KeyboardEvent, i: number) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const next = document.getElementById('ai' + (i + 1)) as HTMLInputElement;
+      if (next) next.focus();
+      else submitAnswers();
+    }
+  }
+
   function submitAnswers() {
     if (submitted) return;
     submitted = true;
     clearInterval(timerInt!);
-    elapsed = Math.round((Date.now() - sessionStart) / 1000);
     let c = 0;
     userAnswers = [];
-    memSets.forEach((_, i) => {
+    memSets.forEach((s, i) => {
       const inp = document.getElementById('ai' + i) as HTMLInputElement;
       const row = document.getElementById('ar' + i);
-      if (!inp || !row) return;
-      const val = parseInt(inp.value);
-      const ans = isNaN(val) ? null : val;
+      const userVal = inp ? parseInt(inp.value) : NaN;
+      const ans = isNaN(userVal) ? null : userVal;
       userAnswers.push(ans);
-      const ok = ans === memSets[i].result;
+      const ok = ans === s.result;
       if (ok) c++;
-      row.className = 'ans-row ' + (ok ? 'correct' : 'wrong');
-      inp.disabled = true;
-      const badge = document.createElement('span');
-      badge.className = 'ans-badge ' + (ok ? 'correct' : 'wrong');
-      badge.textContent = ok ? '✓' : '✗ ' + memSets[i].result;
-      row.appendChild(badge);
+      if (row) row.className = 'ans-row ' + (ok ? 'correct' : 'wrong');
+      if (inp) inp.disabled = true;
+      if (row) {
+        const badge = document.createElement('span');
+        badge.className = 'ans-badge ' + (ok ? 'correct' : 'wrong');
+        badge.textContent = ok ? '\u2713' : '\u2717 ' + s.result;
+        row.appendChild(badge);
+      }
     });
     correct = c;
     let pct = Math.round((c / memSets.length) * 100);
@@ -153,21 +175,25 @@
 
   function peek() {
     peeked = true;
-    const overlay = document.createElement('div');
-    overlay.className = 'peek-overlay';
-    overlay.innerHTML = memSets.map((s, i) => {
+    const btn = document.getElementById('peek-btn') as HTMLButtonElement;
+    if (btn) { btn.disabled = true; btn.textContent = '\u{1F441} Peeked (minus 10pts)'; }
+    const ol = document.createElement('div');
+    ol.style.cssText = 'position:fixed;inset:0;background:rgba(8,8,16,0.95);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:40px;';
+    memSets.forEach((s, i) => {
       const eq = s.nums.map((n, ni) =>
-        `<span class="peek-n">${n}</span>${ni < s.ops.length ? ` <span class="peek-o">${s.ops[ni]}</span> ` : ''}`
+        `<span style="color:var(--accent4)">${n}</span>${ni < s.ops.length ? ` <span style="color:var(--accent3)">${s.ops[ni]}</span> ` : ''}`
       ).join('');
-      return `<div class="peek-row"><span class="peek-idx">SET ${i + 1}</span>${eq}</div>`;
-    }).join('') + `<button class="btn btn-secondary peek-close" onclick="this.parentElement.remove()">✕ Close</button>`;
-    document.body.appendChild(overlay);
-  }
-
-  function onKeyRecall(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !submitted) {
-      submitAnswers();
-    }
+      ol.innerHTML += `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 28px;font-family:var(--mono);font-size:1.1rem;">
+        <span style="color:var(--text-dim);font-size:0.65rem;margin-right:14px;">SET ${i + 1}</span>${eq}
+      </div>`;
+    });
+    const cb = document.createElement('button');
+    cb.textContent = '\u2715 Close';
+    cb.className = 'btn btn-secondary';
+    cb.style.marginTop = '16px';
+    cb.onclick = () => document.body.removeChild(ol);
+    ol.appendChild(cb);
+    document.body.appendChild(ol);
   }
 
   onDestroy(() => { clearInterval(timerInt!); });
@@ -175,31 +201,31 @@
 
 {#if view === 'config'}
   <div class="config-panel">
-    <div class="config-panel-title">🧩 Memory Calculation</div>
+    <div class="config-panel-title">{'\u{1F9E9}'} Memory Calculation</div>
     <div class="config-panel-sub">Memorize multiple calculation sets, then recall all answers from memory.</div>
 
     <div class="config-grid">
       <div class="cfg-item">
         <label>Number of Sets</label>
         <div class="stepper">
-          <button onclick={() => stepper('sets', -1)}>−</button>
-          <span style="text-align:center;color:var(--text);font-family:var(--mono);font-size:1rem;min-width:48px;">{sets}</span>
+          <button onclick={() => stepper('sets', -1)}>{'\u2212'}</button>
+          <span class="stepper-val">{sets}</span>
           <button onclick={() => stepper('sets', 1)}>+</button>
         </div>
       </div>
       <div class="cfg-item">
         <label>Numbers per Set</label>
         <div class="stepper">
-          <button onclick={() => stepper('perSet', -1)}>−</button>
-          <span style="text-align:center;color:var(--text);font-family:var(--mono);font-size:1rem;min-width:48px;">{perSet}</span>
+          <button onclick={() => stepper('perSet', -1)}>{'\u2212'}</button>
+          <span class="stepper-val">{perSet}</span>
           <button onclick={() => stepper('perSet', 1)}>+</button>
         </div>
       </div>
       <div class="cfg-item">
         <label>Memorize Time (sec)</label>
         <div class="stepper">
-          <button onclick={() => stepper('memTime', -1)}>−</button>
-          <span style="text-align:center;color:var(--text);font-family:var(--mono);font-size:1rem;min-width:48px;">{memTime}</span>
+          <button onclick={() => stepper('memTime', -1)}>{'\u2212'}</button>
+          <span class="stepper-val">{memTime}</span>
           <button onclick={() => stepper('memTime', 1)}>+</button>
         </div>
       </div>
@@ -208,9 +234,9 @@
     <div class="cfg-item" style="margin-bottom:18px;">
       <label>Operations</label>
       <div class="op-pills">
-        {#each ['+', '-', '×'] as op}
-          <div class="op-pill" class:selected={ops.includes(op)} onclick={() => toggleOp(op)} data-op={op}>
-            {op === '+' ? '＋ Add' : op === '-' ? '－ Sub' : '× Mul'}
+        {#each ['+', '-', '\u00d7'] as op}
+          <div class="op-pill" class:selected={ops.includes(op)} onclick={() => toggleOp(op)}>
+            {op === '+' ? '\uFF0B Add' : op === '-' ? '\uFF0D Sub' : '\u00d7 Mul'}
           </div>
         {/each}
       </div>
@@ -220,16 +246,16 @@
       <label>Difficulty</label>
       <div class="diff-row">
         {#each ['easy', 'medium', 'hard'] as d}
-          <div class="diff-btn" class:sel-easy={diff === d} onclick={() => setDiff(d)}>
-            {d === 'easy' ? 'Easy' : d === 'medium' ? 'Medium' : 'Hard'}<br><small>{d === 'easy' ? '1–9' : d === 'medium' ? '1–50' : '1–99'}</small>
+          <div class="diff-btn" class:sel-easy={diff === d} onclick={() => diff = d}>
+            {d === 'easy' ? 'Easy' : d === 'medium' ? 'Medium' : 'Hard'}<br><small>{d === 'easy' ? '1\u20139' : d === 'medium' ? '1\u201350' : '1\u201399'}</small>
           </div>
         {/each}
       </div>
     </div>
 
     <div class="btn-row">
-      <button class="btn btn-primary" onclick={startSession}>▶ Start Memory Training</button>
-      <a href="/NeuroV2/" class="btn btn-ghost">← Back</a>
+      <button class="btn btn-primary" onclick={startSession}>{'\u25B6'} Start Memory Training</button>
+      <a href="/NeuroV2/" class="btn btn-ghost">{'\u2190'} Back</a>
     </div>
   </div>
 
@@ -238,20 +264,17 @@
     <div class="timer-row">
       <div class="timer-ring-wrap">
         <svg viewBox="0 0 68 68" width="68" height="68">
-          <circle class="tr-track" cx="34" cy="34" r="28" stroke-width="4" fill="none" stroke="var(--border2)"/>
-          <circle class="tr-fill" id="mem-ring" cx="34" cy="34" r="28"
-                  stroke-dasharray="176" stroke-dashoffset="0" stroke-width="4" fill="none" stroke="var(--accent)" stroke-linecap="round"/>
+          <circle class="tr-track" cx="34" cy="34" r="28"/>
+          <circle class="tr-fill" id="tr-fill" cx="34" cy="34" r="28" stroke-dasharray="176" stroke-dashoffset="0"/>
         </svg>
-        <div class="timer-num" id="mem-timer-num">{timeLeft}</div>
+        <div class="timer-num" id="tr-num">{'\u2014'}</div>
       </div>
       <div class="timer-info">
         <div class="timer-lbl">Time Remaining</div>
-        <div class="timer-desc">Memorize all sets carefully</div>
+        <div class="timer-desc" id="tr-desc">Memorize all sets carefully</div>
       </div>
     </div>
-    <div class="prog-wrap">
-      <div class="prog-fill" style="width:{(timeLeft / memTime) * 100}%"></div>
-    </div>
+    <div class="prog-wrap"><div class="prog-fill" id="mem-prog" style="width:100%"></div></div>
     <div class="mem-sets-wrap">
       {#each memSets as s, i}
         <div class="mem-set-card" style="animation-delay:{i * 0.07}s">
@@ -270,8 +293,8 @@
       {/each}
     </div>
     <div class="btn-row">
-      <button class="btn btn-primary" onclick={goRecall}>✓ I'm Ready — Test Me</button>
-      <button class="btn btn-ghost" onclick={cancel}>✕ Cancel</button>
+      <button class="btn btn-primary" onclick={goRecall}>{'\u2713'} I'm Ready — Test Me</button>
+      <button class="btn btn-ghost" onclick={cancel}>{'\u2715'} Cancel</button>
     </div>
   </div>
 
@@ -281,75 +304,66 @@
       <div style="font-size:1rem;font-weight:700;margin-bottom:2px;">Enter Your Answers</div>
       <div style="color:var(--text-dim);font-size:0.83rem;">Recall each result from memory and type it in.</div>
     </div>
-    <div class="ans-rows" onkeydown={onKeyRecall}>
+    <div class="ans-rows">
       {#each memSets as s, i}
         <div class="ans-row" id="ar{i}">
           <span class="ans-badge-sm">Set {i + 1}</span>
-          <input class="ans-inp" id="ai{i}" type="number" placeholder="?" autocomplete="off" disabled={submitted} />
+          <input class="ans-inp" id="ai{i}" type="number" placeholder="?" autocomplete="off" onkeydown={(e) => onRecallKey(e, i)} disabled={submitted} />
         </div>
       {/each}
     </div>
     <div class="divider"></div>
     <div class="btn-row">
-      <button class="btn btn-success" onclick={submitAnswers} disabled={submitted}>✓ Submit Answers</button>
-      <button class="btn btn-warn" onclick={peek} disabled={peeked || submitted}>👁 Peek (−10pts)</button>
-      <button class="btn btn-ghost" onclick={cancel}>✕ Quit</button>
+      <button class="btn btn-success" onclick={submitAnswers} disabled={submitted}>{'\u2713'} Submit Answers</button>
+      <button class="btn btn-warn" id="peek-btn" onclick={peek} disabled={peeked || submitted}>{'\u{1F441}'} Peek ({'\u2212'}10pts)</button>
+      <button class="btn btn-ghost" onclick={cancel}>{'\u2715'} Quit</button>
     </div>
   </div>
 
 {:else if view === 'result'}
   <div class="config-panel" style="padding:28px;">
     <div class="result-hero">
-      <div class="result-pct" style="background:linear-gradient(135deg,var(--accent5),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">{score}%</div>
+      <div class="result-pct">{score}%</div>
       <div class="result-lbl">Accuracy</div>
-      <div class="result-msg">{['Keep Training! 💪','Good Effort! 👍','Well Done! 🌟','Excellent! 🎯','Perfect Memory! 🏆'][Math.min(4, Math.floor(score / 20))]}</div>
+      <div class="result-msg">{['Keep Training! \u{1F4AA}','Good Effort! \u{1F44D}','Well Done! \u{1F31F}','Excellent! \u{1F3AF}','Perfect Memory! \u{1F3C6}'][Math.min(4, Math.floor(score / 20))]}</div>
     </div>
     <div class="res-grid">
-      <div class="res-stat">
-        <div class="res-stat-val" style="color:var(--accent)">{correct}</div>
-        <div class="res-stat-lbl">Correct</div>
-      </div>
-      <div class="res-stat">
-        <div class="res-stat-val" style="color:var(--accent)">{total}</div>
-        <div class="res-stat-lbl">Total</div>
-      </div>
-      <div class="res-stat">
-        <div class="res-stat-val" style="color:var(--accent)">{elapsed}s</div>
-        <div class="res-stat-lbl">Time Used</div>
-      </div>
+      <div class="res-stat"><div class="res-stat-val">{correct}</div><div class="res-stat-lbl">Correct</div></div>
+      <div class="res-stat"><div class="res-stat-val">{total}</div><div class="res-stat-lbl">Total</div></div>
+      <div class="res-stat"><div class="res-stat-val">{elapsed}s</div><div class="res-stat-lbl">Time Used</div></div>
     </div>
-    <div class="divider"></div>
-    <div style="font-family:var(--mono);font-size:0.62rem;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Review</div>
-    {#each memSets as s, i}
-      {@const ans = userAnswers[i]}
-      {@const ok = ans === s.result}
-      <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:0.82rem;">
-        <span style="color:var(--text-dim);min-width:46px;">Set {i + 1}</span>
-        <span style="flex:1;color:var(--text-mid);">
-          {s.nums.map((n, ni) => n + (ni < s.ops.length ? ' ' + s.ops[ni] + ' ' : '')).join('')}= <strong style="color:var(--accent)">{s.result}</strong>
-        </span>
-        <span style="color:{ok ? 'var(--success)' : 'var(--danger)'};">{ok ? '✓ Correct' : '✗ You: ' + (ans === null ? '—' : ans)}</span>
-      </div>
-    {/each}
+    <div id="mem-review">
+      <div class="divider"></div>
+      <div class="review-header">Review</div>
+      {#each memSets as s, i}
+        {@const ans = userAnswers[i]}
+        {@const ok = ans === s.result}
+        <div class="review-row">
+          <span class="review-idx">Set {i + 1}</span>
+          <span class="review-eq">{s.nums.map((n, ni) => n + (ni < s.ops.length ? ' ' + s.ops[ni] + ' ' : '')).join('')}= <strong>{s.result}</strong></span>
+          <span class="review-verd" class:correct={ok} class:wrong={!ok}>{ok ? '\u2713 Correct' : '\u2717 You: ' + (ans === null ? '\u2014' : ans)}</span>
+        </div>
+      {/each}
+    </div>
     <div class="btn-row" style="margin-top:20px;">
-      <button class="btn btn-primary" onclick={startSession}>↺ Play Again</button>
-      <button class="btn btn-secondary" onclick={() => view = 'config'}>⚙ New Config</button>
-      <a href="/NeuroV2/" class="btn btn-ghost">← Back</a>
+      <button class="btn btn-primary" onclick={startSession}>{'\u21BA'} Play Again</button>
+      <button class="btn btn-secondary" onclick={() => view = 'config'}>{'\u2699'} New Config</button>
+      <a href="/NeuroV2/" class="btn btn-ghost">{'\u2190'} Back to Config</a>
     </div>
   </div>
 {/if}
 
 <style>
-  :global(.peek-overlay) {
-    position:fixed;inset:0;background:rgba(8,8,16,0.95);z-index:100;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:40px;
-  }
-  :global(.peek-row) {
-    background:var(--surface);border:1px solid var(--border);border-radius:10px;
-    padding:16px 28px;font-family:var(--mono);font-size:1.1rem;
-  }
-  :global(.peek-idx) { color:var(--text-dim);font-size:0.65rem;margin-right:14px; }
-  :global(.peek-n) { color:var(--accent4); }
-  :global(.peek-o) { color:var(--accent3);margin:0 4px; }
-  :global(.peek-close) { margin-top:16px; }
+  .stepper-val{text-align:center;color:var(--text);font-family:var(--mono);font-size:1rem;min-width:48px;}
+  .review-header{font-family:var(--mono);font-size:0.62rem;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;}
+  .review-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:0.82rem;}
+  .review-idx{color:var(--text-dim);min-width:46px;}
+  .review-eq{flex:1;color:var(--text-mid);}
+  .review-eq strong{color:var(--accent);}
+  .review-verd.correct{color:var(--success);}
+  .review-verd.wrong{color:var(--danger);}
+  :global(.result-pct){font-size:5rem;}
+  :global(.res-stat){background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;min-width:100px;}
+  :global(.timer-desc){margin-top:4px;}
+  :global(.prog-wrap){height:3px;margin-bottom:20px;}
 </style>
