@@ -2,6 +2,7 @@
   import { appData } from '$lib/sync/store';
   import { rnd, shuffle, flash, flashCard, flashCardWrong } from '$lib/utils';
   import type { MemorySession } from '$lib/types.js';
+  import { onMount, onDestroy } from 'svelte';
 
   let view = $state<'config' | 'practice'>('config');
   let showAddFact = $state(false);
@@ -27,12 +28,22 @@
   let timeSelect = $state('60');
   let drillTimerInt: ReturnType<typeof setInterval> | null = null;
   let drillTimeLeft = $state(0);
+  let storeUnsub: (() => void) | null = null;
 
-  // Initialize sessions from store
-  $effect(() => {
-    const d = $appData;
-    sessions = d.memorySessions || [];
-    if (sessions.length > 0 && !activeSession) activeSession = sessions[0].id;
+  onMount(() => {
+    storeUnsub = appData.subscribe(d => {
+      const saved = d.memorySessions || [];
+      if (JSON.stringify(saved) !== JSON.stringify(sessions)) {
+        sessions = saved;
+      }
+      if (sessions.length > 0 && !activeSession) {
+        activeSession = sessions[0].id;
+      }
+    });
+  });
+
+  onDestroy(() => {
+    if (storeUnsub) storeUnsub();
   });
 
   function saveSessions() {
