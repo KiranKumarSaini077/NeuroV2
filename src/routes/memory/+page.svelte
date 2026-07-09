@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appData } from '$lib/sync/store';
-  import { rnd, flash } from '$lib/utils';
+  import { rnd, flash, confetti, dateStamp } from '$lib/utils';
   import { onMount, onDestroy } from 'svelte';
 
   type MemSet = { nums: number[]; ops: string[]; result: number };
@@ -167,9 +167,10 @@
       ...d,
       globalScore: d.globalScore + c * 10,
       streak: pct === 100 ? d.streak + 1 : 0,
-      history: [...d.history, { score: pct, correct: c, total: memSets.length, time: elapsed, mode: 'Memory', diff }]
+      history: [...d.history, { score: pct, correct: c, total: memSets.length, time: elapsed, mode: 'Memory', diff, date: dateStamp() }]
     }));
 
+    if (pct === 100) confetti();
     setTimeout(() => view = 'result', 500);
   }
 

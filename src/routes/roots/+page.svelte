@@ -1,13 +1,13 @@
 <script lang="ts">
   import { appData } from '$lib/sync/store';
   import { PERFECT_SQUARES, PERFECT_CUBES, ROOT_SQ_RANGES, ROOT_POOL_SIZES } from '$lib/constants';
-  import { rnd, shuffle, flash, flashCard, flashCardWrong } from '$lib/utils';
+  import { rnd, shuffle, flash, flashCard, flashCardWrong, confetti, dateStamp } from '$lib/utils';
 
   let view = $state<'config' | 'practice'>('config');
   let rootModes = $state<string[]>(['sq-to-root']);
   let sqRanges = $state<string[]>(ROOT_SQ_RANGES.map(r => r.label));
 
-  function getRootAllItems(mode: string) {
+  function getAllItems(mode: string) {
     const all = mode === 'sq-to-root' ? PERFECT_SQUARES.map(p => p.val)
               : mode === 'root-to-sq' ? PERFECT_SQUARES.map(p => p.n)
               : mode === 'cu-to-root' ? PERFECT_CUBES.map(p => p.val)
@@ -23,16 +23,19 @@
   }
 
   function buildPool(mode: string) {
-    const all = getRootAllItems(mode);
+    const all = getAllItems(mode);
     const size = ROOT_POOL_SIZES[mode];
     const shuffled = shuffle([...all]);
     const items = shuffled.slice(0, Math.min(size, shuffled.length));
     const correctCount: Record<number, number> = {};
     items.forEach(v => { correctCount[v] = 0; });
-    return { items, correctCount, masteredItems: [] as number[] };
+    return { items, correctCount, masteredItems: [] as number[], allItems: all };
   }
 
-  let pools = $state<Record<string, { items: number[]; correctCount: Record<number, number>; masteredItems: number[] }>>({
+  let pools = $state<Record<string, {
+    items: number[]; correctCount: Record<number, number>;
+    masteredItems: number[]; allItems: number[];
+  }>>({
     'sq-to-root': buildPool('sq-to-root'),
     'root-to-sq': buildPool('root-to-sq'),
     'cu-to-root': buildPool('cu-to-root'),
@@ -54,6 +57,7 @@
   let timeSelect = $state('60');
   let drillTimerInt: ReturnType<typeof setInterval> | null = null;
   let drillTimeLeft = $state(0);
+  let poolMsg = $state('');
 
   function toggleRootMode(m: string) {
     if (rootModes.includes(m)) {
@@ -81,6 +85,19 @@
     return { 'sq-to-root':'SQUARE ROOTS', 'root-to-sq':'ROOT → SQUARE', 'cu-to-root':'CUBE ROOTS', 'root-to-cu':'ROOT → CUBE' }[m] || m.toUpperCase();
   }
 
+  function refillPool(mode: string) {
+    const pool = pools[mode];
+    const remaining = pool.allItems.filter(v => !pool.items.includes(v));
+    if (remaining.length === 0) return false;
+    const addCount = Math.min(ROOT_POOL_SIZES[mode], remaining.length);
+    const newItems = shuffle([...remaining]).slice(0, addCount);
+    pool.items = [...pool.items, ...newItems];
+    newItems.forEach(v => { pool.correctCount[v] = 0; });
+    poolMsg = `➕ Added ${addCount} new items!`;
+    setTimeout(() => poolMsg = '', 3000);
+    return true;
+  }
+
   function newQuestion() {
     const inp = document.getElementById('roots-ans') as HTMLInputElement;
     if (inp) { inp.value = ''; inp.className = 'answer-field'; inp.focus(); }
@@ -91,19 +108,20 @@
     curMode = mode;
     let pool = pools[mode];
 
-    // Check if all items are mastered
-    const allMastered = pool.items.every(v => pool.masteredItems.includes(v));
-    if (allMastered && pool.items.length > 0) {
-      // Reset pool with new items
-      pools = { ...pools, [mode]: buildPool(mode) };
-      pool = pools[mode];
-      mastered = 0;
-      qText = '🎉 ALL MASTERED! New pool loaded.';
-      setTimeout(newQuestion, 1500);
-      return;
+    const unmastered = pool.items.filter(v => !pool.masteredItems.includes(v));
+    if (unmastered.length === 0) {
+      if (pool.items.every(v => pool.masteredItems.includes(v))) {
+        const ok = refillPool(mode);
+        if (!ok) {
+          qText = '🎉 ALL ITEMS MASTERED!';
+          confetti();
+          setTimeout(newQuestion, 2000);
+          return;
+        }
+        pool = pools[mode];
+      }
     }
 
-    // Pick from unmastered items
     const available = pool.items.filter(v => !pool.masteredItems.includes(v));
     const item = available.length > 0 ? available[Math.floor(Math.random() * available.length)] : pool.items[0];
     curItem = item;
@@ -113,15 +131,10 @@
             : mode === 'cu-to-root' ? Math.round(Math.cbrt(item))
             : item;
 
-    if (mode === 'sq-to-root') {
-      answer = n; qText = `√${item} = ?`;
-    } else if (mode === 'root-to-sq') {
-      answer = item * item; qText = `${item}² = ?`;
-    } else if (mode === 'cu-to-root') {
-      answer = n; qText = `∛${item} = ?`;
-    } else {
-      answer = n * n * n; qText = `${item}³ = ?`;
-    }
+    if (mode === 'sq-to-root') { answer = n; qText = `√${item} = ?`; }
+    else if (mode === 'root-to-sq') { answer = item * item; qText = `${item}² = ?`; }
+    else if (mode === 'cu-to-root') { answer = n; qText = `∛${item} = ?`; }
+    else { answer = n * n * n; qText = `${item}³ = ?`; }
     hint = String(answer);
     pending = true;
     total++;
@@ -133,19 +146,18 @@
     const val = inp.value.trim();
     if (String(answer) === val) {
       inp.className = 'answer-field correct';
-      correct++; score += 10;
-      pending = false;
+      correct++; score += 10; pending = false;
       appData.update(d => ({ ...d, globalScore: d.globalScore + 10 }));
       streak = [...streak, 1];
       if (streak.length > 10) streak = streak.slice(-10);
 
-      // Track mastery
       const pool = pools[curMode];
       if (pool && curItem !== null) {
         pool.correctCount[curItem] = (pool.correctCount[curItem] || 0) + 1;
         if (pool.correctCount[curItem] >= 5 && !pool.masteredItems.includes(curItem)) {
           pool.masteredItems = [...pool.masteredItems, curItem];
           mastered++;
+          if (pool.masteredItems.length === pool.allItems.length) confetti();
         }
         pools = { ...pools, [curMode]: { ...pool } };
       }
@@ -156,6 +168,7 @@
       setTimeout(newQuestion, 300);
     } else {
       inp.className = 'answer-field wrong';
+      streak = [];
       const card = document.getElementById('roots-card');
       if (card) flashCardWrong(card);
       setTimeout(() => { inp.className = 'answer-field'; }, 500);
@@ -180,18 +193,16 @@
     const finalTotal = pending ? total - 1 : total;
     const pct = finalTotal > 0 ? Math.round((correct / finalTotal) * 100) : 0;
     appData.update(d => ({
-      ...d,
-      globalScore: d.globalScore + score,
+      ...d, globalScore: d.globalScore + score,
       streak: correct > 0 ? d.streak + 1 : 0,
-      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Roots', diff: rootModes.join(',') }]
+      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Roots', diff: rootModes.join(','), date: dateStamp() }]
     }));
     view = 'config';
   }
 
   function startPractice() {
-    // Rebuild pools from current ranges
     rootModes.forEach(m => { pools = { ...pools, [m]: buildPool(m) }; });
-    mastered = 0; score = 0; correct = 0; total = 0; streak = []; pending = false;
+    mastered = 0; score = 0; correct = 0; total = 0; streak = []; pending = false; poolMsg = '';
     view = 'practice';
     if (timed) { drillTimeLeft = parseInt(timeSelect); startDrillTimer(); }
     newQuestion();
@@ -211,6 +222,12 @@
     drillTimerInt = setInterval(() => {
       drillTimeLeft--;
       if (document.getElementById('roots-timer-num')) document.getElementById('roots-timer-num')!.textContent = String(drillTimeLeft);
+      const fillEl = document.getElementById('roots-timer-fill');
+      if (fillEl) {
+        const r = drillTimeLeft / duration;
+        fillEl.style.strokeDashoffset = String(88 * (1 - r));
+        fillEl.style.stroke = `hsl(${120 * r},80%,55%)`;
+      }
       if (drillTimeLeft <= 0) finishSession();
     }, 1000);
   }
@@ -219,7 +236,7 @@
 {#if view === 'config'}
   <div class="config-panel">
     <div class="config-panel-title">√ Roots Practice</div>
-    <div class="config-panel-sub">Progressive memorization — master a root 5 times to unlock a harder one.</div>
+    <div class="config-panel-sub">Master a root 5 times to lock it in. New items appear as you progress.</div>
 
     <div class="cfg-item" style="margin-bottom:20px;">
       <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Select Modes</label>
@@ -236,9 +253,9 @@
 
     <div class="cfg-item" style="margin-bottom:18px;">
       <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Square Range</label>
-      <div class="diff-row">
+      <div class="diff-row" style="flex-wrap:wrap;">
         {#each ROOT_SQ_RANGES as r}
-          <div class="diff-btn sel-easy" class:sel-easy={sqRanges.includes(r.label)} onclick={() => toggleSqRange(r.label)}>{r.label}</div>
+          <div class="diff-btn" class:sel-easy={sqRanges.includes(r.label)} onclick={() => toggleSqRange(r.label)}>{r.label}</div>
         {/each}
       </div>
     </div>
@@ -264,6 +281,7 @@
   <div class="practice-card" id="roots-card">
     <div class="drill-timer-wrap" id="roots-timer-display" style="display:none;margin-bottom:16px;">
       <div style="display:flex;align-items:center;gap:8px;justify-content:center;">
+        <svg viewBox="0 0 32 32" width="36" height="36"><circle class="tr-track" cx="16" cy="16" r="14" stroke-width="2.5" fill="none" stroke="var(--border)"/><circle class="tr-fill" id="roots-timer-fill" cx="16" cy="16" r="14" stroke-width="2.5" stroke-dasharray="88" stroke-dashoffset="0" fill="none" stroke="var(--accent)"/></svg>
         <span style="font-family:var(--mono);font-size:1.2rem;font-weight:700;color:var(--accent);" id="roots-timer-num">{drillTimeLeft}</span>
       </div>
     </div>
@@ -271,28 +289,34 @@
     <div class="question-text">{qText}</div>
     <input class="answer-field" id="roots-ans" type="text" placeholder="?" autocomplete="off" inputmode="numeric" oninput={onInput} onkeydown={onKey} />
     <div class="hint-text" id="roots-hint">Press Space for hint</div>
+    {#if poolMsg}
+      <div style="text-align:center;font-size:0.75rem;color:var(--accent);margin-bottom:8px;">{poolMsg}</div>
+    {/if}
     <div class="practice-meta">
       <div class="practice-stat-chip">Score <span>{score}</span></div>
       <div class="practice-stat-chip">Mastered <span>{mastered}</span></div>
-      <div class="practice-stat-chip">Pool Size <span>{poolSize()}</span></div>
+      <div class="practice-stat-chip">Pool <span>{poolSize()}</span></div>
     </div>
     <div class="streak-bar">
       {#each streak as s}<div class="streak-dot lit"></div>{/each}
       {#each Array(Math.max(0, 10 - streak.length)) as _}<div class="streak-dot"></div>{/each}
+      {#if streak.length > 0}<span class="streak-count">{streak.length}</span>{/if}
     </div>
   </div>
   {#if curMode}
     <div style="margin-top:14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 16px;">
       <div style="font-family:var(--mono);font-size:0.65rem;color:var(--text-dim);margin-bottom:8px;letter-spacing:2px;">CURRENT POOL</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        {#each (pools[curMode]?.items || []).map(v => ({ v, mastered: pools[curMode]?.masteredItems.includes(v) })) as item}
-          <span style="font-family:var(--mono);font-size:0.72rem;padding:2px 8px;border-radius:4px;background:{item.mastered ? 'rgba(79,255,176,0.1)' : 'var(--surface3)'};color:{item.mastered ? 'var(--accent)' : 'var(--text-dim)'};">{item.v}</span>
+        {#each (pools[curMode]?.items || []).map(v => ({ v, mastered: pools[curMode]?.masteredItems.includes(v), count: (pools[curMode]?.correctCount[v] || 0) })) as item}
+          <span style="font-family:var(--mono);font-size:0.72rem;padding:2px 8px;border-radius:4px;background:{item.mastered ? 'rgba(79,255,176,0.15)' : 'var(--surface3)'};color:{item.mastered ? 'var(--accent)' : 'var(--text-dim)'};">
+            {item.v}{#if !item.mastered}{'·'.repeat(item.count)}{/if}
+          </span>
         {/each}
       </div>
     </div>
   {/if}
   <div class="practice-actions">
-    <button class="btn btn-ghost" onclick={goBack}>← Back to Config</button>
+    <button class="btn btn-ghost" onclick={goBack}>← Back</button>
     <button class="btn btn-secondary" onclick={newQuestion}>Skip →</button>
   </div>
 {/if}

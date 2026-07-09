@@ -23,6 +23,7 @@ export interface SessionRecord {
   time: number;
   mode: string;
   diff: string;
+  date?: string;
 }
 
 export interface TblState {
@@ -36,6 +37,9 @@ export interface TblState {
   isCustom?: boolean;
   lastFact?: number | null;
   customFacts?: CustomFact[];
+  mastered: number[];
+  customFactLevels: Record<number, number>;
+  wrongStreak: number;
 }
 
 export interface CustomFact {

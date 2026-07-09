@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appData } from '$lib/sync/store';
-  import { rnd, flash, flashCard, flashCardWrong } from '$lib/utils';
+  import { rnd, flash, flashCard, flashCardWrong, dateStamp } from '$lib/utils';
 
   let view = $state<'config' | 'practice'>('config');
   let mode = $state('mixed-to-improper');
@@ -106,7 +106,7 @@
       ...d,
       globalScore: d.globalScore + score,
       streak: correct > 0 ? d.streak + 1 : 0,
-      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Mixed', diff: mode }]
+      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Mixed', diff: mode, date: dateStamp() }]
     }));
     view = 'config';
   }
@@ -125,6 +125,12 @@
     drillTimerInt = setInterval(() => {
       drillTimeLeft--;
       if (document.getElementById('mixed-timer-num')) document.getElementById('mixed-timer-num')!.textContent = String(drillTimeLeft);
+      const fillEl = document.getElementById('mixed-timer-fill');
+      if (fillEl) {
+        const r = drillTimeLeft / duration;
+        fillEl.style.strokeDashoffset = String(88 * (1 - r));
+        fillEl.style.stroke = `hsl(${120 * r},80%,55%)`;
+      }
       if (drillTimeLeft <= 0) finishSession();
     }, 1000);
   }
@@ -166,6 +172,7 @@
   <div class="practice-card" id="mixed-card">
     <div class="drill-timer-wrap" id="mixed-timer-display" style="display:none;margin-bottom:16px;">
       <div style="display:flex;align-items:center;gap:8px;justify-content:center;">
+        <svg viewBox="0 0 32 32" width="36" height="36"><circle class="tr-track" cx="16" cy="16" r="14" stroke-width="2.5" fill="none" stroke="var(--border)"/><circle class="tr-fill" id="mixed-timer-fill" cx="16" cy="16" r="14" stroke-width="2.5" stroke-dasharray="88" stroke-dashoffset="0" fill="none" stroke="var(--accent)"/></svg>
         <span style="font-family:var(--mono);font-size:1.2rem;font-weight:700;color:var(--accent);" id="mixed-timer-num">{drillTimeLeft}</span>
       </div>
     </div>

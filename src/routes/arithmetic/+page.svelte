@@ -1,9 +1,8 @@
 <script lang="ts">
   import { appData } from '$lib/sync/store';
-  import { rnd, evalBODMAS, flash, flashCard, flashCardWrong } from '$lib/utils';
-  import { onMount, onDestroy } from 'svelte';
+  import { rnd, evalBODMAS, flash, flashCard, flashCardWrong, dateStamp } from '$lib/utils';
+  import { onDestroy } from 'svelte';
 
-  // State
   let view = $state<'config' | 'practice'>('config');
   let modes = $state<string[]>([]);
   let opCount = $state(2);
@@ -25,11 +24,9 @@
   let qTime = $state('00.0s');
   let timerInt: ReturnType<typeof setInterval> | null = null;
 
-  // Config
   let allModes = ['Addition','Subtraction','Carry Subtraction','Multiplication','Division','100-n'];
-  let symMap: Record<string,string> = { Addition:'+', Subtraction:'−', 'Carry Subtraction':'−', Multiplication:'×', Division:'÷', '100-n':'−' };
+  let symMap: Record<string,string> = { Addition:'+', Subtraction:'-', 'Carry Subtraction':'-', Multiplication:'�', Division:'�', '100-n':'-' };
 
-  // Timed challenge (countdown)
   let drillTimerInt: ReturnType<typeof setInterval> | null = null;
   let drillTimeLeft = $state(0);
 
@@ -45,8 +42,8 @@
   function updateTimers() {
     const now = Date.now();
     const sec = Math.floor((now - sessionStart) / 1000);
-    sessionTime = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
-    qTime = ((now - qStart) / 1000).toFixed(1) + 's';
+    sessionTime = String(Math.floor(sec / 60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+    qTime = ((now - qStart)/1000).toFixed(1)+'s';
   }
 
   function startDrillTimer(duration: number, onEnd: () => void) {
@@ -59,8 +56,10 @@
       drillTimeLeft--;
       if (numEl) numEl.textContent = String(drillTimeLeft);
       if (fillEl) {
-        const r = drillTimeLeft / duration;
-        fillEl.style.strokeDashoffset = String(88 * (1 - r));
+        const r = drillTimeLeft/duration;
+        fillEl.style.strokeDashoffset = String(88*(1 - r));
+        const hue = 120 * r;
+        fillEl.style.stroke = `hsl(${hue},80%,55%)`;
       }
       if (drillTimeLeft <= 0) {
         if (drillTimerInt) clearInterval(drillTimerInt);
@@ -79,12 +78,11 @@
     stopDrillTimer();
     if (timerInt) { clearInterval(timerInt); timerInt = null; }
     const finalTotal = pending ? total - 1 : total;
-    const pct = finalTotal > 0 ? Math.round((correct / finalTotal) * 100) : 0;
+    const pct = finalTotal > 0 ? Math.round((correct/finalTotal)*100) : 0;
     appData.update(d => ({
-      ...d,
-      globalScore: d.globalScore + score,
+      ...d, globalScore: d.globalScore + score,
       streak: correct > 0 ? d.streak + 1 : 0,
-      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Arithmetic', diff: opCount + 'nums' }]
+      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Arithmetic', diff: opCount+'nums', date: dateStamp() }]
     }));
     view = 'config';
   }
@@ -96,11 +94,23 @@
     sessionStart = Date.now(); qStart = Date.now();
     if (timerInt) clearInterval(timerInt);
     timerInt = setInterval(updateTimers, 100);
-    if (timed) {
-      const dur = parseInt(timeSelect);
-      startDrillTimer(dur, finishSession);
-    }
+    if (timed) { startDrillTimer(parseInt(timeSelect), finishSession); }
     newQuestion();
+  }
+
+  function genCarrySub(): { a: number; b: number; ans: number } | null {
+    const d = digits.first;
+    const max = 10**d - 1;
+    const min = 10**(d-1);
+    for (let att = 0; att < 100; att++) {
+      const a = rnd(max, min), b = rnd(max, min);
+      if (a <= b || a - b < 1) continue;
+      const as = String(a), bs = String(b).padStart(as.length,'0');
+      for (let i = as.length - 1; i >= 0; i--) {
+        if (+as[i] < +bs[i]) return { a, b, ans: a - b };
+      }
+    }
+    return null;
   }
 
   function newQuestion() {
@@ -110,46 +120,54 @@
     const hintEl = document.getElementById('arith-hint');
     if (hintEl) { hintEl.textContent = 'Press Space for hint'; hintEl.className = 'hint-text'; }
 
-    // Handle 100-n mode
-    if (modes.includes('100-n') && (modes.length === 1 || Math.random() < 1 / modes.length)) {
-      const n = rnd(100, 1);
-      answer = 100 - n;
-      hint = String(answer);
-      pending = true;
-      qHtml = `<span class="num">100</span><span class="op">−</span><span class="num">${n}</span><span class="unk">= ?</span>`;
-      total++;
-      return;
+    // 100-n mode
+    if (modes.includes('100-n') && (modes.length === 1 || Math.random() < 1/modes.length)) {
+      const n = rnd(100, 1); answer = 100 - n; hint = String(answer); pending = true;
+      qHtml = `<span class="num">100</span><span class="op">-</span><span class="num">${n}</span><span class="unk">= ?</span>`;
+      total++; return;
     }
 
     const pool = modes.filter(m => m !== '100-n');
+    const chosenMode = pool[rnd(pool.length-1,0)];
+
+    // Carry Subtraction (2-num only)
+    if (chosenMode === 'Carry Subtraction' && opCount === 2) {
+      const g = genCarrySub();
+      if (g) {
+        answer = g.ans; hint = String(g.ans); pending = true;
+        qHtml = `<span class="num">${g.a}</span><span class="op">-</span><span class="num">${g.b}</span><span class="unk">= ?</span>`;
+        total++; return;
+      }
+    }
+
+    // Multi-operand / other modes
     const count = opCount;
-    const ops = Array.from({ length: count - 1 }, () => {
-      const m = pool[Math.floor(Math.random() * pool.length)];
+    const ops = Array.from({length:count-1}, () => {
+      const m = pool[Math.floor(Math.random()*pool.length)];
       return symMap[m];
     });
 
     let nums: number[] = [], ans: number | null = null;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let att = 0; att < 40; att++) {
       nums = [];
       for (let i = 0; i < count; i++) {
-        const isDiv = i > 0 && ops[i - 1] === '÷';
+        const isDiv = i > 0 && ops[i-1] === '�';
         const d = isDiv ? digits.den : (count === 2 && i === 1 ? digits.second : digits.first);
-        nums.push(rnd(Math.max(10 ** d - 1, 1), 10 ** (d - 1)));
+        nums.push(rnd(Math.max(10**d-1,1), 10**(d-1)));
       }
       for (let i = 0; i < ops.length; i++) {
-        if (ops[i] === '÷') {
-          const divisor = nums[i + 1] < 1 ? 1 : nums[i + 1];
-          nums[i + 1] = divisor;
-          const maxQ = digits.first <= 2 ? 25 : 9;
-          nums[i] = divisor * rnd(maxQ, 2);
+        if (ops[i] === '�' || ops[i] === '/') {
+          const divisor = Math.max(nums[i+1], 1);
+          nums[i+1] = divisor;
+          nums[i] = divisor * rnd(digits.first <= 2 ? 25 : 9, 2);
         }
       }
       const res = evalBODMAS(nums, ops);
       if (Number.isInteger(res) && res >= 0 && res <= 999999) { ans = res; break; }
     }
     if (ans === null) {
-      const a = rnd(99, 10), b = rnd(99, 10);
-      nums = [a, b]; ops.length = 0; ops.push('+'); ans = a + b;
+      nums = [rnd(99,10), rnd(99,10)];
+      ops.length = 0; ops.push('+'); ans = nums[0]+nums[1];
     }
     answer = ans; hint = String(ans); pending = true;
     let html = '';
@@ -158,8 +176,7 @@
       if (i < ops.length) html += `<span class="op">${ops[i]}</span>`;
     }
     html += `<span class="unk">= ?</span>`;
-    qHtml = html;
-    total++;
+    qHtml = html; total++;
   }
 
   function checkAnswer() {
@@ -168,17 +185,15 @@
     const val = inp.value.trim();
     if (String(answer) === val) {
       inp.className = 'answer-field correct';
-      correct++; score += 10;
-      pending = false;
+      correct++; score += 10; pending = false;
       appData.update(d => ({ ...d, globalScore: d.globalScore + 10 }));
-      streak = [...streak, 1];
-      if (streak.length > 10) streak = streak.slice(-10);
-      flash('✓');
+      streak = [...streak, 1]; if (streak.length > 10) streak = streak.slice(-10);
+      flash('?');
       const card = document.getElementById('arith-card');
       if (card) flashCard(card);
       setTimeout(newQuestion, 300);
     } else {
-      inp.className = 'answer-field wrong';
+      inp.className = 'answer-field wrong'; streak = [];
       const card = document.getElementById('arith-card');
       if (card) flashCardWrong(card);
       setTimeout(() => { inp.className = 'answer-field'; }, 500);
@@ -194,35 +209,26 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const inp = document.getElementById('arith-ans') as HTMLInputElement;
-      if (inp && inp.value.trim()) checkAnswer();
-    }
-    if (e.key === ' ') {
-      e.preventDefault();
-      const el = document.getElementById('arith-hint');
-      if (el) { el.textContent = 'Hint: ' + hint; el.className = 'hint-text shown'; }
-    }
+    if (e.key === 'Enter') { e.preventDefault(); const inp = document.getElementById('arith-ans') as HTMLInputElement; if (inp && inp.value.trim()) checkAnswer(); }
+    if (e.key === ' ') { e.preventDefault(); const el = document.getElementById('arith-hint'); if (el) { el.textContent = 'Hint: '+hint; el.className = 'hint-text shown'; } }
   }
 
   function goBack() {
     if (pending && total > 1 && !confirm('Leave session? Progress will be lost.')) return;
     if (timerInt) { clearInterval(timerInt); timerInt = null; }
-    stopDrillTimer();
-    view = 'config';
+    stopDrillTimer(); view = 'config';
   }
 
-  onDestroy(() => {
-    if (timerInt) clearInterval(timerInt);
-    stopDrillTimer();
-  });
+  let hasDivision = $derived(modes.includes('Division'));
+  let hasCarrySub = $derived(modes.includes('Carry Subtraction'));
+  let showMultiOpTip = $derived(modes.length > 1 || opCount > 2 || hasDivision || hasCarrySub);
+
+  onDestroy(() => { if (timerInt) clearInterval(timerInt); stopDrillTimer(); });
 </script>
 
-<!-- Config -->
 {#if view === 'config'}
   <div class="config-panel">
-    <div class="config-panel-title">🔢 Arithmetic Drill</div>
+    <div class="config-panel-title">?? Arithmetic Drill</div>
     <div class="config-panel-sub">Speed practice for all arithmetic operations.</div>
 
     <div class="cfg-item" style="margin-bottom:18px;">
@@ -230,7 +236,7 @@
       <div class="mode-grid">
         {#each allModes as m}
           <div class="mode-card" class:selected={modes.includes(m)} onclick={() => toggleMode(m)}>
-            <div class="mode-card-icon">{m === '100-n' ? '𝟭𝟬𝟬' : symMap[m]}</div>
+            <div class="mode-card-icon">{m === '100-n' ? '??????' : symMap[m]}</div>
             <div class="mode-card-name">{m}</div>
             <div class="mode-card-desc">{m === '100-n' ? 'Subtract from 100' : m + ' practice'}</div>
           </div>
@@ -254,15 +260,33 @@
           <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Digit Size</label>
           <div class="diff-row">
             {#each [1,2,3,4] as d}
-              <div class="diff-btn" class:sel-easy={digits.first === d} onclick={() => digits = { ...digits, first: d }}>{d}d</div>
+              <div class="diff-btn" class:sel-easy={digits.first === d} onclick={() => digits = { ...digits, first: d, second: d }}>{d}d</div>
             {/each}
           </div>
         </div>
       </div>
+      {#if hasDivision}
+        <div class="config-grid" style="margin-bottom:16px;">
+          <div class="cfg-item">
+            <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Divisor Digits</label>
+            <div class="diff-row">
+              {#each [1,2] as d}
+                <div class="diff-btn" class:sel-easy={digits.den === d} onclick={() => digits = { ...digits, den: d, num: d+1 }}>{d}d</div>
+              {/each}
+            </div>
+          </div>
+        </div>
+      {/if}
+    {/if}
+
+    {#if showMultiOpTip}
+      <div style="background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;font-size:0.75rem;color:var(--text-dim);">
+        ?? Multi-operand questions follow <strong>BODMAS</strong>: Brackets, Order, Division/Multiplication (L?R), Addition/Subtraction (L?R).{hasCarrySub ? ' "Carry Subtraction" generates problems requiring borrowing across digits.' : ''}{hasDivision ? ' Division generates clean integer quotients.' : ''}
+      </div>
     {/if}
 
     <div class="timed-toggle-wrap">
-      <div class="timed-label">⏱ Timed Challenge</div>
+      <div class="timed-label">? Timed Challenge</div>
       <div class="timed-controls">
         <select bind:value={timeSelect} style="background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-family:var(--mono);font-size:0.75rem;outline:none;">
           <option value="30">30s</option>
@@ -277,12 +301,11 @@
     </div>
 
     <div class="btn-row" style="margin-top:20px;">
-      <button class="btn btn-primary" onclick={startPractice}>▶ Start Drill</button>
-      <a href="/NeuroV2/" class="btn btn-ghost">← Back</a>
+      <button class="btn btn-primary" onclick={startPractice}>? Start Drill</button>
+      <a href="/NeuroV2/" class="btn btn-ghost">? Back</a>
     </div>
   </div>
 {:else}
-  <!-- Practice -->
   <div class="practice-card" id="arith-card">
     <div class="drill-timer-wrap" id="arith-timer-display" style="display:none;margin-bottom:16px;">
       <div style="display:flex;align-items:center;gap:8px;justify-content:center;">
@@ -310,14 +333,13 @@
       {#each Array(Math.max(0, 10 - streak.length)) as _}
         <div class="streak-dot"></div>
       {/each}
+      {#if streak.length > 0}
+        <span class="streak-count">{streak.length}</span>
+      {/if}
     </div>
   </div>
   <div class="practice-actions">
-    <button class="btn btn-ghost" onclick={goBack}>← Back to Config</button>
-    <button class="btn btn-secondary" onclick={newQuestion}>Skip →</button>
+    <button class="btn btn-ghost" onclick={goBack}>? Back to Config</button>
+    <button class="btn btn-secondary" onclick={newQuestion}>Skip ?</button>
   </div>
 {/if}
-
-<style>
-  .cfg-item label { font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px; }
-</style>

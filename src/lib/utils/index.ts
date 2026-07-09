@@ -1,3 +1,3 @@
-export * from './math';
-export * from './storage';
-export * from './dom';
+export { rnd, shuffle, evalBODMAS, opSymbol, computeCustomAns } from './math';
+export { safeGet, safeSet } from './storage';
+export { flash, flashCard, flashCardWrong, confetti, dateStamp, streakBar } from './dom';

@@ -19,7 +19,8 @@ function defaultAppData(): AppData {
     memCfg: { sets: 3, nums: 2, time: 30, ops: ['+'] },
     tblState: {
       tablesMastered: 0, totalMastered: 0, score: 0,
-      currentTable: 1, factsMastered: 0, customFactIdx: null, leitner: {}
+      currentTable: 1, factsMastered: 0, customFactIdx: null, leitner: {},
+      mastered: [], customFactLevels: {}, wrongStreak: 0
     },
     tblCustomFacts: [],
     memorySessions: []
