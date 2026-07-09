@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "push": "pwsh -File scripts/push.ps1",
+    "push:msg": "pwsh -File scripts/push.ps1 -msg",
+    "watch": "pwsh -File scripts/watch.ps1"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
