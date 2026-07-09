@@ -4,7 +4,7 @@
   import { rnd, shuffle, flash, flashCard, flashCardWrong, confetti, dateStamp } from '$lib/utils';
 
   let view = $state<'config' | 'practice'>('config');
-  let modes = $state<string[]>(['frac-pct']);
+  let mode = $state('frac-pct');
   let hint = $state('');
   let score = $state(0);
   let correct = $state(0);
@@ -19,13 +19,9 @@
   let drillTimeLeft = $state(0);
 
   let pool = $state<string[]>([...DEFAULT_FRAC_SELECTED]);
-  let sessMastered = $state(0);
-  let itemCorrectCount: Record<string, number> = {};
-  let masteredItems: string[] = [];
+  let sessPool: { input: string; output: string }[] = [];
 
-  function toggleMode(m: string) {
-    modes = [m];
-  }
+  function toggleMode(m: string) { mode = m; }
 
   function togglePoolItem(frac: string) {
     if (pool.includes(frac)) {
@@ -36,29 +32,28 @@
     }
   }
 
-  function selectAllPool() {
-    pool = Object.keys(FRACTIONS_TO_PERCENT);
-  }
+  function selectAllPool() { pool = Object.keys(FRACTIONS_TO_PERCENT); }
+  function selectNonePool() { pool = []; }
+  function selectDefaultPool() { pool = [...DEFAULT_FRAC_SELECTED]; }
 
-  function selectDefaultPool() {
-    pool = [...DEFAULT_FRAC_SELECTED];
-  }
-
-  function isPercentAnswer(v: string): boolean {
-    return v.includes('%');
-  }
-
-  function buildPool() {
+  function buildPool(): { input: string; output: string }[] {
     const items: { input: string; output: string }[] = [];
     for (const f of pool) {
-      if (FRACTIONS_TO_PERCENT[f]) {
-        items.push({ input: f, output: FRACTIONS_TO_PERCENT[f] });
-      }
+      if (FRACTIONS_TO_PERCENT[f]) items.push({ input: f, output: FRACTIONS_TO_PERCENT[f] });
     }
     return shuffle(items);
   }
 
-  let sessPool: { input: string; output: string }[] = [];
+  let grouped = $derived.by(() => {
+    const g: Record<string, string[]> = {};
+    for (const frac of Object.keys(FRACTIONS_TO_PERCENT)) {
+      const d = frac.split('/')[1];
+      if (!g[d]) g[d] = [];
+      g[d].push(frac);
+    }
+    const keys = Object.keys(g).map(Number).sort((a, b) => a - b);
+    return keys.map(k => ({ den: k, items: g[String(k)] }));
+  });
 
   function newQuestion() {
     const inp = document.getElementById('frac-ans') as HTMLInputElement;
@@ -66,106 +61,43 @@
     const hintEl = document.getElementById('frac-hint');
     if (hintEl) { hintEl.textContent = 'Press Space for hint'; hintEl.className = 'hint-text'; }
 
-    const mode = modes[0];
-
-    if (mode === 'frac-mem') {
-      if (sessPool.length === 0) {
-        sessPool = buildPool();
-        masteredItems = []; itemCorrectCount = {};
-      }
-      const avail = sessPool.filter(i => !masteredItems.includes(i.input));
-      if (avail.length === 0) {
-        if (masteredItems.length === sessPool.length && sessPool.length > 0) {
-          confetti();
-          qHtml = `🎉 ALL ${sessPool.length} MASTERED!`;
-          setTimeout(() => { sessPool = buildPool(); masteredItems = []; itemCorrectCount = {}; newQuestion(); }, 2000);
-          return;
-        }
-        sessPool = buildPool(); masteredItems = []; itemCorrectCount = {};
-      }
-      const item = sessPool.filter(i => !masteredItems.includes(i.input))[rnd(sessPool.filter(i => !masteredItems.includes(i.input)).length - 1, 0)];
-      if (!item && sessPool.length > 0) {
-        const fallback = sessPool[0];
-        const [n, d] = fallback.input.split('/');
-        answer = fallback.output;
-        hint = answer;
-        qHtml = `<span class="frac"><span class="num">${n}</span><span class="den">${d}</span></span> = ?%`;
-        pending = true; total++;
-        return;
-      }
-      const [n, d] = item.input.split('/');
-      answer = item.output;
-      hint = answer;
-      qHtml = `<span class="frac"><span class="num">${n}</span><span class="den">${d}</span></span> = ?%`;
-      pending = true; total++;
-      return;
-    }
-
-    // F→%, %→F, or Mixed
     const poolItems = pool.filter(f => FRACTIONS_TO_PERCENT[f]);
     if (poolItems.length === 0) {
-      qHtml = '⚠ No fractions selected'; pending = false; return;
+      qHtml = '⚠ Select at least one fraction'; pending = false; return;
     }
 
-    let isFwd: boolean;
-    if (mode === 'mixed') {
-      isFwd = Math.random() < 0.5;
-    } else {
-      isFwd = mode === 'frac-pct';
-    }
-
+    const isFwd = mode === 'mixed' ? Math.random() < 0.5 : mode === 'frac-pct';
     const frac = poolItems[rnd(poolItems.length - 1, 0)];
     const pct = FRACTIONS_TO_PERCENT[frac];
     const [n, d] = frac.split('/');
 
     if (isFwd) {
-      answer = pct;
-      hint = pct;
+      answer = pct; hint = pct;
       qHtml = `<span class="frac"><span class="num">${n}</span><span class="den">${d}</span></span> = ?%`;
     } else {
-      answer = frac;
-      hint = frac;
+      answer = frac; hint = frac;
       qHtml = `<span style="color:var(--text-dim);font-size:1.1rem;font-weight:600;">${pct}</span> = ? (as fraction)`;
     }
-    pending = true;
-    total++;
+    pending = true; total++;
   }
 
   function checkAnswer() {
     const inp = document.getElementById('frac-ans') as HTMLInputElement;
     if (!inp || !inp.value.trim()) return;
     const val = inp.value.trim();
-    const ans = String(answer).trim();
-
-    const normAns = ans.replace('%', '').trim();
-    const normVal = val.replace('%', '').trim();
-
+    const normAns = String(answer).replace('%','').trim();
+    const normVal = val.replace('%','').trim();
     if (normAns === normVal) {
       inp.className = 'answer-field correct';
       correct++; score += 10; pending = false;
       appData.update(d => ({ ...d, globalScore: d.globalScore + 10 }));
-      streak = [...streak, 1];
-      if (streak.length > 10) streak = streak.slice(-10);
-
-      if (modes[0] === 'frac-mem') {
-        if (sessPool.length > 0) {
-          const key = sessPool.find(i => i.output === answer || i.input === answer)?.input || answer;
-          itemCorrectCount[key] = (itemCorrectCount[key] || 0) + 1;
-          if (itemCorrectCount[key] >= 5 && !masteredItems.includes(key)) {
-            masteredItems = [...masteredItems, key];
-            sessMastered++;
-            if (masteredItems.length === sessPool.length) confetti();
-          }
-        }
-      }
-
+      streak = [...streak, 1]; if (streak.length > 10) streak = streak.slice(-10);
       flash('✓');
       const card = document.getElementById('frac-card');
       if (card) flashCard(card);
       setTimeout(newQuestion, 300);
     } else {
-      inp.className = 'answer-field wrong';
-      streak = [];
+      inp.className = 'answer-field wrong'; streak = [];
       const card = document.getElementById('frac-card');
       if (card) flashCardWrong(card);
       setTimeout(() => { inp.className = 'answer-field'; }, 500);
@@ -186,9 +118,10 @@
     if (e.key === ' ') { e.preventDefault(); const el = document.getElementById('frac-hint'); if (el) { el.textContent = 'Hint: ' + hint; el.className = 'hint-text shown'; } }
   }
 
-  function startPractice() {
-    sessMastered = 0; sessPool = buildPool();
-    masteredItems = []; itemCorrectCount = {};
+  function startPractice(all = false) {
+    if (all) { pool = Object.keys(FRACTIONS_TO_PERCENT); }
+    else if (pool.length === 0) { flash('⚠ Select fractions'); return; }
+    sessPool = buildPool();
     score = 0; correct = 0; total = 0; streak = []; pending = false;
     view = 'practice';
     if (timed) { drillTimeLeft = parseInt(timeSelect); startDrillTimer(); }
@@ -202,7 +135,7 @@
     appData.update(d => ({
       ...d, globalScore: d.globalScore + score,
       streak: correct > 0 ? d.streak + 1 : 0,
-      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Fractions', diff: modes[0], date: dateStamp() }]
+      history: [...d.history, { score: pct, correct, total: finalTotal, time: 0, mode: 'Fractions', diff: mode, date: dateStamp() }]
     }));
     view = 'config';
   }
@@ -241,36 +174,54 @@
     <div class="config-panel-sub">Memorize fraction ↔ percent conversions.</div>
 
     <div class="cfg-item" style="margin-bottom:20px;">
-      <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Select Mode</label>
+      <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Direction</label>
       <div class="mode-grid">
-        {#each ['frac-pct', 'pct-frac', 'mixed', 'frac-mem'] as m}
-          <div class="mode-card" class:selected={modes[0] === m} onclick={() => toggleMode(m)}>
-            <div class="mode-card-icon">{m === 'frac-pct' ? '→%' : m === 'pct-frac' ? '%→' : m === 'mixed' ? '↔' : '🧠'}</div>
-            <div class="mode-card-name">{m === 'frac-pct' ? 'F → %' : m === 'pct-frac' ? '% → F' : m === 'mixed' ? 'Mixed' : 'Mastery'}</div>
-            <div class="mode-card-desc">{m === 'frac-pct' ? '1/2 → 50%' : m === 'pct-frac' ? '50% → 1/2' : m === 'mixed' ? 'Both directions' : '5× correct = mastered'}</div>
+        {#each ['frac-pct', 'pct-frac', 'mixed'] as m}
+          <div class="mode-card" class:selected={mode === m} onclick={() => toggleMode(m)}>
+            <div class="mode-card-icon">{m === 'frac-pct' ? '→%' : m === 'pct-frac' ? '%→' : '↔'}</div>
+            <div class="mode-card-name">{m === 'frac-pct' ? 'F → %' : m === 'pct-frac' ? '% → F' : 'Mixed'}</div>
+            <div class="mode-card-desc">{m === 'frac-pct' ? '1/2 → 50%' : m === 'pct-frac' ? '50% → 1/2' : 'Both directions'}</div>
           </div>
         {/each}
       </div>
     </div>
 
     <div class="cfg-item" style="margin-bottom:18px;">
-      <label style="font-size:0.82rem;font-weight:600;display:block;margin-bottom:6px;">Fraction Pool <span style="color:var(--text-dim);font-size:0.7rem;font-family:var(--mono);">({poolCount}/{allCount} selected)</span></label>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <label style="font-size:0.82rem;font-weight:600;">Select Fractions</label>
+        <span style="font-size:0.7rem;font-family:var(--mono);color:var(--text-dim);">{poolCount}/{allCount} selected</span>
+      </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;">
         <button class="btn btn-ghost" onclick={selectAllPool} style="padding:4px 10px;font-size:0.72rem;">Select All</button>
+        <button class="btn btn-ghost" onclick={selectNonePool} style="padding:4px 10px;font-size:0.72rem;">None</button>
         <button class="btn btn-ghost" onclick={selectDefaultPool} style="padding:4px 10px;font-size:0.72rem;">Defaults</button>
       </div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;max-height:200px;overflow-y:auto;padding:6px;background:var(--surface3);border-radius:var(--radius-sm);">
-        {#each Object.keys(FRACTIONS_TO_PERCENT) as frac}
-          <label style="display:flex;align-items:center;gap:4px;font-size:0.72rem;font-family:var(--mono);cursor:pointer;padding:3px 6px;background:{pool.includes(frac) ? 'var(--accent-dim)' : 'var(--surface2)'};border-radius:4px;">
-            <input type="checkbox" checked={pool.includes(frac)} onchange={() => togglePoolItem(frac)} style="accent-color:var(--accent);width:14px;height:14px;">
-            {frac}
-          </label>
+      <div class="frac-pool-table">
+        {#each grouped as g}
+          <div class="frac-pool-group">
+            <div class="frac-pool-den">Denominator {g.den}</div>
+            <div class="frac-pool-items">
+              {#each g.items as frac}
+                {@const sel = pool.includes(frac)}
+                <label class="frac-pool-chip" class:selected={sel}>
+                  <input type="checkbox" checked={sel} onchange={() => togglePoolItem(frac)} />
+                  <span class="frac-pool-label">{frac}</span>
+                  <span class="frac-pool-pct">{FRACTIONS_TO_PERCENT[frac]}</span>
+                </label>
+              {/each}
+            </div>
+          </div>
         {/each}
       </div>
     </div>
 
-    <div class="btn-row">
-      <button class="btn btn-primary" onclick={startPractice}>▶ Start Practice</button>
+    <div class="btn-row" style="gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick={() => startPractice(false)} disabled={pool.length === 0}>
+        ▶ Practice Selected ({poolCount})
+      </button>
+      <button class="btn btn-secondary" onclick={() => startPractice(true)}>
+        ▶▶ Practice All ({allCount})
+      </button>
       <a href="/NeuroV2/" class="btn btn-ghost">← Back</a>
     </div>
 
@@ -294,16 +245,13 @@
         <span style="font-family:var(--mono);font-size:1.2rem;font-weight:700;color:var(--accent);" id="frac-timer-num">{drillTimeLeft}</span>
       </div>
     </div>
-    <div class="practice-mode-badge">{modes[0] === 'frac-pct' ? 'F → %' : modes[0] === 'pct-frac' ? '% → F' : modes[0] === 'mixed' ? 'MIXED' : 'MASTERY'}</div>
+    <div class="practice-mode-badge">{mode === 'frac-pct' ? 'F → %' : mode === 'pct-frac' ? '% → F' : 'MIXED'}</div>
     <div class="question-text">{@html qHtml}</div>
     <input class="answer-field" id="frac-ans" type="text" placeholder="?" autocomplete="off" inputmode="text" oninput={onInput} onkeydown={onKey} />
     <div class="hint-text" id="frac-hint">Press Space for hint</div>
     <div class="practice-meta">
       <div class="practice-stat-chip">Score <span>{score}</span></div>
-      <div class="practice-stat-chip">Correct <span>{correct}</span></div>
-      {#if modes[0] === 'frac-mem'}
-        <div class="practice-stat-chip">Mastered <span>{sessMastered}</span></div>
-      {/if}
+      <div class="practice-stat-chip">Correct <span>{correct}/{total}</span></div>
     </div>
     <div class="streak-bar">
       {#each streak as s}<div class="streak-dot lit"></div>{/each}
@@ -316,3 +264,15 @@
     <button class="btn btn-secondary" onclick={newQuestion}>Skip →</button>
   </div>
 {/if}
+
+<style>
+  .frac-pool-table{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;padding:4px;border-radius:var(--radius-sm);}
+  .frac-pool-group{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
+  .frac-pool-den{background:var(--surface3);padding:5px 10px;font-family:var(--mono);font-size:0.68rem;color:var(--text-dim);letter-spacing:1px;border-bottom:1px solid var(--border);}
+  .frac-pool-items{display:flex;gap:3px;flex-wrap:wrap;padding:6px;background:var(--surface2);}
+  .frac-pool-chip{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:0.72rem;background:var(--surface3);border:1px solid var(--border);transition:0.15s;user-select:none;}
+  .frac-pool-chip:has(input:checked){background:rgba(79,255,176,0.12);border-color:var(--accent);}
+  .frac-pool-chip input{display:none;}
+  .frac-pool-label{font-family:var(--mono);font-weight:600;color:var(--text);}
+  .frac-pool-pct{font-family:var(--mono);font-size:0.65rem;color:var(--text-dim);}
+</style>
